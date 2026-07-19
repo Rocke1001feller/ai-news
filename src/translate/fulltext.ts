@@ -1,20 +1,23 @@
 /**
  * Full-text translation for article snapshots (build-time, Google gtx endpoint).
  *
- * Walks block-level elements of the Readability HTML, translates each block's
- * text as a unit (sentence coherence beats inline markup: block content is
- * replaced with the translated plain text), and returns a structurally
- * identical HTML with zh text where translation succeeded — untranslated
- * blocks keep the original English so partial coverage still renders fine.
+ * Sentence-level contract: each block-level element is split into sentences,
+ * every sentence is translated independently (sha1-cached), and the snapshot
+ * stores per-block sentence pairs — alignment is guaranteed at the source,
+ * the reader never has to guess which zh sentence belongs to which en sentence.
  *
- * Cache: paragraph-level sha1 cache persisted to data/paragraph-zh-cache.json
- * via the data branch, so unchanged paragraphs are never re-translated.
+ * zhHtml (paragraph mirror) is still emitted by joining sentence translations,
+ * so legacy consumers keep working during the transition.
+ *
+ * Cache: sha1(sentence) persisted to data/paragraph-zh-cache.json via the
+ * data branch, so unchanged sentences are never re-translated.
  */
 
 import { createHash } from 'node:crypto';
 import { parseHTML } from 'linkedom';
 import { translateToZhCN } from './google.js';
 import { isMostlyEnglish } from '../utils/text.js';
+import { splitSentences } from './sentences.js';
 
 const BLOCK_SELECTOR =
   'p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, figcaption, dd, dt';
@@ -23,10 +26,23 @@ const MIN_BLOCK_CHARS = 2;
 
 export type ZhCache = Map<string, string>;
 
-export interface TranslateResult {
+export interface SentencePair {
+  en: string;
+  zh: string | null;
+}
+
+export interface BlockPairs {
+  /** The block's original HTML (markup preserved). */
+  html_en: string;
+  /** Empty for non-English blocks (rendered as-is). */
+  sentences: SentencePair[];
+}
+
+export interface TranslateBlocksResult {
+  blocks: BlockPairs[];
   zhHtml: string | null;
-  totalBlocks: number;
-  translatedBlocks: number;
+  totalSentences: number;
+  translatedSentences: number;
   fromCache: number;
   requests: number;
 }
@@ -39,12 +55,12 @@ function key(text: string): string {
   return createHash('sha1').update(text).digest('hex');
 }
 
-export async function translateHtmlToZh(
+export async function translateBlocksToPairs(
   html: string,
   cache: ZhCache,
   budget: { remaining: number },
   concurrency = 3,
-): Promise<TranslateResult> {
+): Promise<TranslateBlocksResult> {
   // linkedom treats the first tag of a fragment as the document element
   // (leaving body empty) — wrap fragments so body contains the content.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -52,22 +68,37 @@ export async function translateHtmlToZh(
     document: any;
   };
 
-  const blocks: Array<{ text: string; el: any }> = [];
+  const blocks: BlockPairs[] = [];
+  interface Work {
+    block: BlockPairs;
+    sentIdx: number;
+    text: string;
+  }
+  const work: Work[] = [];
+  const englishEls: Array<{ el: any; block: BlockPairs }> = [];
+
   for (const el of document.querySelectorAll(BLOCK_SELECTOR)) {
     if (el.closest(SKIP_ANCESTOR)) continue;
     const text = clean(el.textContent ?? '');
-    if (text.length < MIN_BLOCK_CHARS || !isMostlyEnglish(text)) continue;
-    blocks.push({ text, el });
+    if (text.length < MIN_BLOCK_CHARS) continue;
+
+    if (!isMostlyEnglish(text)) {
+      // Already-zh (or mixed) block: keep original markup, no sentences.
+      blocks.push({ html_en: el.outerHTML, sentences: [] });
+      continue;
+    }
+
+    const sentences = splitSentences(text).map((en) => ({ en, zh: null as string | null }));
+    const block: BlockPairs = { html_en: el.outerHTML, sentences };
+    blocks.push(block);
+    englishEls.push({ el, block });
+    sentences.forEach((s, sentIdx) => work.push({ block, sentIdx, text: s.en }));
   }
 
-  if (blocks.length === 0) {
-    return { zhHtml: null, totalBlocks: 0, translatedBlocks: 0, fromCache: 0, requests: 0 };
-  }
-
-  let translatedBlocks = 0;
+  let translatedSentences = 0;
   let fromCache = 0;
   let requests = 0;
-  const queue = [...blocks];
+  const queue = [...work];
 
   async function worker() {
     for (;;) {
@@ -84,16 +115,28 @@ export async function translateHtmlToZh(
         if (zh) cache.set(k, zh);
       }
       if (zh) {
-        translatedBlocks += 1;
-        item.el.textContent = zh;
+        translatedSentences += 1;
+        item.block.sentences[item.sentIdx].zh = zh;
       }
     }
   }
 
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
-  const zhHtml = translatedBlocks > 0 ? document.body.innerHTML : null;
-  return { zhHtml, totalBlocks: blocks.length, translatedBlocks, fromCache, requests };
+  // Build the paragraph-level zh mirror from sentence translations.
+  for (const { el, block } of englishEls) {
+    el.textContent = block.sentences.map((s) => s.zh ?? s.en).join(' ');
+  }
+  const zhHtml = translatedSentences > 0 ? document.body.innerHTML : null;
+
+  return {
+    blocks,
+    zhHtml,
+    totalSentences: work.length,
+    translatedSentences,
+    fromCache,
+    requests,
+  };
 }
 
 export async function translateSummary(

@@ -17,7 +17,12 @@ import pLimit from 'p-limit';
 import { parseHTML } from 'linkedom';
 import { Readability } from '@mozilla/readability';
 import { isMostlyEnglish } from './utils/text.js';
-import { translateHtmlToZh, translateSummary, type ZhCache } from './translate/fulltext.js';
+import {
+  translateBlocksToPairs,
+  translateSummary,
+  type BlockPairs,
+  type ZhCache,
+} from './translate/fulltext.js';
 
 interface NewsItem {
   id: string;
@@ -46,6 +51,8 @@ interface ArticleSnapshot {
   byline: string | null;
   excerpt: string | null;
   content_html: string;
+  /** Sentence-level bilingual pairs per block (contract v2). */
+  blocks?: BlockPairs[];
   content_html_zh?: string;
   translated?: boolean;
   content_text: string;
@@ -226,24 +233,25 @@ async function main() {
 
   const tLimiter = pLimit(TRANSLATE_CONCURRENCY);
   let articlesTranslated = 0;
-  let blocksTranslated = 0;
+  let sentencesTranslated = 0;
   let requestsUsed = 0;
   let cacheHits = 0;
   await Promise.all(
     toTranslate.map((snap) =>
       tLimiter(async () => {
-        const r = await translateHtmlToZh(snap.content_html, zhCache, budget, TRANSLATE_CONCURRENCY);
-        blocksTranslated += r.translatedBlocks;
+        const r = await translateBlocksToPairs(snap.content_html, zhCache, budget, TRANSLATE_CONCURRENCY);
+        sentencesTranslated += r.translatedSentences;
         requestsUsed += r.requests;
         cacheHits += r.fromCache;
+        snap.blocks = r.blocks;
+        snap.translated = r.translatedSentences > 0;
         if (r.zhHtml) {
           snap.content_html_zh = r.zhHtml;
-          snap.translated = true;
-          articlesTranslated += 1;
-          await writeFile(join(outdir, `${snap.id}.json`), JSON.stringify(snap));
-        } else {
-          snap.translated = false;
         }
+        if (snap.translated) {
+          articlesTranslated += 1;
+        }
+        await writeFile(join(outdir, `${snap.id}.json`), JSON.stringify(snap));
 
         const item = itemById.get(snap.id);
         if (item?.summary && isMostlyEnglish(item.summary) && !item.summary_zh) {
@@ -257,7 +265,7 @@ async function main() {
   await writeFile(ZH_CACHE_FILE, JSON.stringify(Object.fromEntries(zhCache)));
   await writeFile(input, JSON.stringify(feed));
   console.log(
-    `[translate] articles=${articlesTranslated}/${toTranslate.length} blocks=${blocksTranslated} requests=${requestsUsed} cacheHits=${cacheHits} budgetLeft=${budget.remaining}`,
+    `[translate] articles=${articlesTranslated}/${toTranslate.length} sentences=${sentencesTranslated} requests=${requestsUsed} cacheHits=${cacheHits} budgetLeft=${budget.remaining}`,
   );
 }
 
