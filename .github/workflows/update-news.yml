@@ -52,6 +52,10 @@ jobs:
       - name: Update data
         run: pnpm run fetch
 
+      - name: Snapshot articles + summaries
+        run: pnpm snapshot
+        continue-on-error: true
+
       - name: Publish data snapshot
         run: |
           cd data
@@ -77,6 +81,7 @@ jobs:
           cp ../data/latest-7d.json dist/data/
           cp ../data/source-status.json dist/data/
           cp ../data/opml-feeds.json dist/data/ 2>/dev/null || true
+          cp -r ../data/articles dist/data/articles 2>/dev/null || true
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
