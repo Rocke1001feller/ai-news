@@ -16,6 +16,8 @@ import { join } from 'node:path';
 import pLimit from 'p-limit';
 import { parseHTML } from 'linkedom';
 import { Readability } from '@mozilla/readability';
+import { isMostlyEnglish } from './utils/text.js';
+import { translateHtmlToZh, translateSummary, type ZhCache } from './translate/fulltext.js';
 
 interface NewsItem {
   id: string;
@@ -25,6 +27,7 @@ interface NewsItem {
   title: string;
   url: string;
   summary?: string;
+  summary_zh?: string;
   has_snapshot?: boolean;
   [key: string]: unknown;
 }
@@ -43,6 +46,8 @@ interface ArticleSnapshot {
   byline: string | null;
   excerpt: string | null;
   content_html: string;
+  content_html_zh?: string;
+  translated?: boolean;
   content_text: string;
   fetched_at: string;
   ok: boolean;
@@ -55,6 +60,8 @@ const FETCH_TIMEOUT_MS = 15000;
 const MAX_HTML_BYTES = 3 * 1024 * 1024;
 const SUMMARY_LIMIT = 220;
 const CONCURRENCY = 15;
+const TRANSLATE_CONCURRENCY = 2;
+const ZH_CACHE_FILE = 'data/paragraph-zh-cache.json';
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -66,6 +73,7 @@ function parseArgs() {
     limit: get('limit') ? parseInt(get('limit')!, 10) : Infinity,
     input: get('input') ?? 'data/latest-24h.json',
     outdir: get('outdir') ?? 'data/articles',
+    maxTranslations: get('max-translations') ? parseInt(get('max-translations')!, 10) : 6000,
   };
 }
 
@@ -160,7 +168,7 @@ async function snapshotItem(item: NewsItem, outdir: string): Promise<ArticleSnap
 }
 
 async function main() {
-  const { limit, input, outdir } = parseArgs();
+  const { limit, input, outdir, maxTranslations } = parseArgs();
   if (!existsSync(input)) {
     console.error(`input not found: ${input}`);
     process.exit(1);
@@ -196,6 +204,61 @@ async function main() {
     const top = [...failures.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
     console.log('[snapshot] top failing hosts:', top.map(([h, n]) => `${h}(${n})`).join(', '));
   }
+
+  // ── Translation pass (build-time bilingual layer) ─────────────────────
+  const zhCache: ZhCache = new Map();
+  if (existsSync(ZH_CACHE_FILE)) {
+    try {
+      const data = JSON.parse(await readFile(ZH_CACHE_FILE, 'utf-8'));
+      for (const [k, v] of Object.entries<string>(data)) zhCache.set(k, v);
+    } catch {
+      console.warn('[translate] cache file unreadable, starting fresh');
+    }
+  }
+  console.log(`[translate] cache size=${zhCache.size}, request budget=${maxTranslations}`);
+
+  const budget = { remaining: maxTranslations };
+  const itemById = new Map(items.map((it) => [it.id, it]));
+  const toTranslate = results.filter(
+    (r) => r.ok && isMostlyEnglish(r.content_text),
+  );
+  console.log(`[translate] ${toTranslate.length} english snapshots to translate`);
+
+  const tLimiter = pLimit(TRANSLATE_CONCURRENCY);
+  let articlesTranslated = 0;
+  let blocksTranslated = 0;
+  let requestsUsed = 0;
+  let cacheHits = 0;
+  await Promise.all(
+    toTranslate.map((snap) =>
+      tLimiter(async () => {
+        const r = await translateHtmlToZh(snap.content_html, zhCache, budget, TRANSLATE_CONCURRENCY);
+        blocksTranslated += r.translatedBlocks;
+        requestsUsed += r.requests;
+        cacheHits += r.fromCache;
+        if (r.zhHtml) {
+          snap.content_html_zh = r.zhHtml;
+          snap.translated = true;
+          articlesTranslated += 1;
+          await writeFile(join(outdir, `${snap.id}.json`), JSON.stringify(snap));
+        } else {
+          snap.translated = false;
+        }
+
+        const item = itemById.get(snap.id);
+        if (item?.summary && isMostlyEnglish(item.summary) && !item.summary_zh) {
+          const zhSummary = await translateSummary(item.summary, zhCache, budget);
+          if (zhSummary) item.summary_zh = zhSummary;
+        }
+      }),
+    ),
+  );
+
+  await writeFile(ZH_CACHE_FILE, JSON.stringify(Object.fromEntries(zhCache)));
+  await writeFile(input, JSON.stringify(feed));
+  console.log(
+    `[translate] articles=${articlesTranslated}/${toTranslate.length} blocks=${blocksTranslated} requests=${requestsUsed} cacheHits=${cacheHits} budgetLeft=${budget.remaining}`,
+  );
 }
 
 main().catch((e) => {
