@@ -1,0 +1,132 @@
+{
+  "generated_at": "2026-10-10T16:13:40.921Z",
+  "sites": [
+    {
+      "site_id": "techurls",
+      "site_name": "TechURLs",
+      "ok": true,
+      "item_count": 405,
+      "duration_ms": 456,
+      "error": null
+    },
+    {
+      "site_id": "buzzing",
+      "site_name": "Buzzing",
+      "ok": true,
+      "item_count": 744,
+      "duration_ms": 495,
+      "error": null
+    },
+    {
+      "site_id": "iris",
+      "site_name": "Info Flow",
+      "ok": true,
+      "item_count": 319,
+      "duration_ms": 17240,
+      "error": null
+    },
+    {
+      "site_id": "bestblogs",
+      "site_name": "BestBlogs",
+      "ok": true,
+      "item_count": 0,
+      "duration_ms": 424,
+      "error": null
+    },
+    {
+      "site_id": "tophub",
+      "site_name": "TopHub",
+      "ok": true,
+      "item_count": 3026,
+      "duration_ms": 938,
+      "error": null
+    },
+    {
+      "site_id": "zeli",
+      "site_name": "Zeli",
+      "ok": true,
+      "item_count": 59,
+      "duration_ms": 651,
+      "error": null
+    },
+    {
+      "site_id": "aihubtoday",
+      "site_name": "AI HubToday",
+      "ok": false,
+      "item_count": 0,
+      "duration_ms": 11169,
+      "error": "fetch failed"
+    },
+    {
+      "site_id": "aibase",
+      "site_name": "AIbase",
+      "ok": true,
+      "item_count": 20,
+      "duration_ms": 1305,
+      "error": null
+    },
+    {
+      "site_id": "aihot",
+      "site_name": "AI今日热榜",
+      "ok": true,
+      "item_count": 0,
+      "duration_ms": 171,
+      "error": null
+    },
+    {
+      "site_id": "newsnow",
+      "site_name": "NewsNow",
+      "ok": true,
+      "item_count": 122,
+      "duration_ms": 3028,
+      "error": null
+    },
+    {
+      "site_id": "youtube",
+      "site_name": "YouTube",
+      "ok": true,
+      "item_count": 45,
+      "duration_ms": 399,
+      "error": null
+    },
+    {
+      "site_id": "xinzhiyuan",
+      "site_name": "新智元",
+      "ok": true,
+      "item_count": 58,
+      "duration_ms": 4542,
+      "error": null
+    },
+    {
+      "site_id": "wechat-rss",
+      "site_name": "微信公众号",
+      "ok": true,
+      "item_count": 155,
+      "duration_ms": 2751,
+      "error": null
+    }
+  ],
+  "successful_sites": 12,
+  "failed_sites": [
+    "aihubtoday"
+  ],
+  "zero_item_sites": [
+    "bestblogs",
+    "aihot"
+  ],
+  "fetched_raw_items": 4953,
+  "items_before_topic_filter": 25049,
+  "items_in_24h": 612,
+  "rss_opml": {
+    "enabled": false,
+    "path": null,
+    "feed_total": 0,
+    "effective_feed_total": 0,
+    "ok_feeds": 0,
+    "failed_feeds": [],
+    "zero_item_feeds": [],
+    "skipped_feeds": [],
+    "replaced_feeds": [],
+    "feeds": []
+  }
+}
